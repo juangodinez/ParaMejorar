@@ -1,0 +1,515 @@
+    static void registra_pt(string VLEtiquetaID, string VLMAquina, string VLUsuario)
+        {
+            BaseDeDatos BDJanus = new BaseDeDatos(); //Realizo la conexion a la base de datos con la libreria ConexionDB.DLL
+            BaseDeDatosAlterna BDSamiXT = new BaseDeDatosAlterna();  //Realizo la conecion a la segunda base de datos
+            DataTable dtable = new DataTable();
+            DataTable dtable2 = new DataTable();
+            DataTable dtable3 = new DataTable();
+            DataTable dtable4 = new DataTable();
+            DataTable dtable5 = new DataTable();
+            DataTable dtable6 = new DataTable();
+            DataTable dtable7 = new DataTable();
+            DataTable dtable8 = new DataTable(); //Este se usa para saber si la PWO es la de produccion
+            DataTable dtable9 = new DataTable();
+            string[,] matrizmateriales = new string[20, 7];
+
+            string SQLs = "", VLNumEtiqueta = "", VLPWO = "", VLNumParte = "", VLDescNumParte = "", VLLote = "", VLGrupo = "", VLMaterial = "", SQLTran = "";
+            string VLPWOReal = "", VLRenglon = "", VLSKUCaja=""; //, VLGrupMat="", VLUniMed="", VLDescMat="";
+            decimal VLCantidad = 0, VLMatxMillar=0, VLAcumulado=0, VLCantidadACubrir=0, VLAcumAntesdeCubrirCant=0;
+            int r = 0, i = 0; // VLFolio = 0,
+            bool VLSihaymaterial = false;
+            string VLFechaYMD = "substring ((CONVERT(VARCHAR(19), GETDATE(), 120)),1,10)";
+            string VLFechaC = "CONVERT(VARCHAR(19), GETDATE(), 120)";
+            string VLFechaM = " CONVERT(VARCHAR(19), GETDATE(), 120)";
+            string VLMinutos = "0";
+            string PVLFolio = "";
+
+            //Revisar que la caja no se haya escaneado
+            Console.WriteLine("Verifica Caja No Repetida..");
+            //******
+            SQLs = "Select  numero_etiqueta, orden_produccion, folio_orden, cantidad_caja, cantidad_total, codigo_producto, descripcion_producto, cliente_nombre, cliente_codigo, pedido_cliente, num_caja, total_cajas, lote_produccion, baja, pedido, cliente_codigo_producto ";
+            SQLs = SQLs + " from t_Etiquetas ";
+            SQLs = SQLs + " Where Numero_etiqueta = substring('" + VLEtiquetaID + "', 1, charindex('*', substring('" + VLEtiquetaID + "', 1, len('" + VLEtiquetaID + "'))) - 1) ";
+            SQLs = SQLs + " and folio_orden = substring('" + VLEtiquetaID + "', charindex('*', substring('" + VLEtiquetaID + "', 1, len('" + VLEtiquetaID + "'))) + 1, ";
+            SQLs = SQLs + " charindex('*', substring('" + VLEtiquetaID + "', charindex('*', substring('" + VLEtiquetaID + "', 1, len('" + VLEtiquetaID + "'))) + 1, len('" + VLEtiquetaID + "'))) - 1)";
+            SQLs = SQLs + " and escaneado='0'";
+            dtable = BDJanus.SelectDataTable(SQLs);
+            if (dtable.Rows.Count > 0)  //Si esta la etiqueta
+            {
+                //Asigno valor a las variables
+                foreach (DataRow ren1 in dtable.Rows) //Si hay ubicacion de la caja escaneada
+                {
+                    VLNumEtiqueta = ren1[0].ToString();
+                    VLPWO = ren1[1].ToString();
+                    VLPWOReal= ren1[2].ToString();
+                    VLCantidad = Convert.ToDecimal(ren1[3].ToString()) / 1000;
+                    VLNumParte = ren1[5].ToString();
+                    VLDescNumParte = ren1[6].ToString();
+                    VLLote = ren1[12].ToString();
+
+                    //Verifico que la PWO sea la que esta en produccion
+                    Console.WriteLine("Verifica PWO ...");
+                    SQLs = "Select folio, estatus, baja from T_OrdenesPlaneadas Where folio='" + VLPWOReal + "' and estatus='PRODUCTION' and baja='0'";
+                    dtable8 = BDJanus.SelectDataTable(SQLs);
+                    if (dtable8.Rows.Count > 0)
+                    {
+                        //Aqui no hay instrucciones
+                    }  //Fin del if (dtable8.Rows.Count > 0)
+                    else
+                    {
+                        MsgError("La etiqueta no corresponde \na la Orden de Produccion \nque se esta fabricando.\nfavor de verificar");
+                        return;  //Salfo del procedimiento
+                    }
+
+                    //Busco el grupo del codigo
+                    //Aqui obtengo el grupo del numero de parte ***************************
+                    Console.WriteLine("Busca Grupo de SKU...");
+                    SQLs = "Select GruProd from T_PRODUCTOS Where NUMPARTE = '" + VLNumParte + "'";
+                    dtable2 = BDJanus.SelectDataTable(SQLs);
+                    if (dtable2.Rows.Count > 0)
+                    {
+                        foreach (DataRow ren2 in dtable2.Rows)
+                        {
+                            VLGrupo = ren2[0].ToString();
+                            
+                        }  //FIN del foreach (DataRow ren2 in dtable2.Rows)
+                        Console.Clear();
+                        Console.WriteLine("Busca Estructura de SKU...");
+                        //Busco la estructura del Numero de Parte y quito la caja de la estructura para consultar existencias por aparte
+                        SQLs = " Select orden_fabricacion, cantidad, codigo_material, descripcion_material, grupo ";
+                        SQLs = SQLs + " from T_ordenFabricacion_Materiales Where orden_fabricacion = '" + VLPWO + "' and primario = '1'  and codigo_material not like '95-000%'";
+                        dtable4 = BDJanus.SelectDataTable(SQLs);
+                        if (dtable4.Rows.Count > 0) //Si hay estructura
+                        {
+
+                            r = 0;
+
+                            foreach (DataRow ren4 in dtable4.Rows) //Recorro material por material
+                            {
+                                VLMatxMillar = Convert.ToDecimal(ren4[1].ToString());
+                                VLCantidadACubrir = VLCantidad * VLMatxMillar;
+                                VLMaterial = ren4[2].ToString();
+
+                                /*Esta consulta ya no usa lote porque causaba problemas con los positivos y negativos*/
+                                SQLs = @"Select  numparte, almacen, ubicacion, cantidad from v_existencias_au 
+                                            Where almacen = '2' and Numparte = '" + VLMaterial + @"' and cantidad > 0 and ubicacion= '" + VLMAquina + "' ";
+
+                                dtable6 = BDJanus.SelectDataTable(SQLs);
+                                if (dtable6.Rows.Count > 0)  //Hay existencia de materiales en ubicacion
+                                {
+                                    Console.Clear();
+                                    Console.WriteLine("Busca exitencia de " + VLMaterial);
+                                    /*Busco existencias en almacen 2 ordenados por lote una vez que vi que si hay existencia en ubicacion*/
+                                    SQLs = "Select  numparte, almacen, ubicacion, lote, cantidad from v_existencias_aul  ";
+                                    SQLs = SQLs + "Where almacen = '2' and Numparte = '" + VLMaterial + "' ";
+                                    SQLs = SQLs + "and cantidad > 0 and ubicacion= '" + VLMAquina + "' order by LOTE ";
+                                    dtable5 = BDJanus.SelectDataTable(SQLs);
+                                    VLAcumAntesdeCubrirCant = 0;
+                                    VLAcumulado = 0;
+                                    foreach (DataRow ren5 in dtable5.Rows)  //Recorro las ubicaciones y lotes del material hasta cubrir lo requerido
+                                    {
+                                        //Se guarda la informacion del registro en la matriz
+
+                                        matrizmateriales[r, 0] = ren4[0].ToString();  //PWO
+                                        matrizmateriales[r, 1] = ren4[1].ToString();  //Cantidad unitaria
+                                        matrizmateriales[r, 2] = ren4[2].ToString();  //Material
+                                        matrizmateriales[r, 3] = ren4[3].ToString();  //descripcion
+                                        matrizmateriales[r, 4] = ren4[4].ToString();  //grupo
+                                        //matrizmateriales[r, 5] = Convert.ToString(VLCantidadACubrir);  //Cantidad de PT a ingresar
+                                        matrizmateriales[r, 6] = ren5[3].ToString();  //Lote
+                                        //Debo verificar que la cantidad de matrizmateriales[r, 5] Sea la cantidad a cubrir si es que la existencia por lote es suficiente
+                                        
+                                        VLAcumulado = VLAcumulado + Convert.ToDecimal(ren5[4].ToString());
+                                        if (VLAcumulado >= VLCantidadACubrir)
+                                        {
+                                            matrizmateriales[r, 5] = Convert.ToString( VLCantidadACubrir - VLAcumAntesdeCubrirCant) ; //Aqui va la resta de la cantidad a surtior menos lo acumulado ****************************
+                                            VLSihaymaterial = true;
+                                            r = r + 1;
+                                            break; //Salgo del foreach
+
+                                        } //FIN de if (VLAcumulado >= VLCantidadACubrir)
+                                        else
+                                        {
+                                            // VLSihaymaterial = false;  //Sigo con el ciclo foreach
+                                            matrizmateriales[r, 5] = ren5[4].ToString();  //Guardo la cantidad existente en almacen 2 del lote indicado
+                                            VLAcumAntesdeCubrirCant = VLAcumulado;  //Voy guardando el acumulado antes de rebasar la cantidad a surtir
+                                            r = r + 1;
+                                        }
+
+                                       
+
+                                    }  //FIN del foreach (DataRow ren5 in dtable5.Rows)
+                                       //Verifico que el acumulado sea mayor a lo requerido despues de que termino de barrerse la lista de ubicaciones
+                                    if (VLAcumulado >= VLCantidadACubrir)
+                                    {
+                                        VLSihaymaterial = true;
+                                    }  /*Fin de if (VLAcumulado >= VLCantidadACubrir) para saber si se cubre
+                                                    lo requerido despues de barrer todos los registros de  existenciasAUL*/
+                                    else //No se cubrio y se procede a salir del ciclo
+                                    {
+                                        MsgError("No se puede registrar \nla produccion debido \na que no se cuenta con \nsuficiente material \n" + VLMaterial);
+                                        VLSihaymaterial = false;
+                                        break;
+                                    }
+                                } //Fin del if (dtable5.Rows.Count > 0)
+                                else
+                                {
+                                    MsgError("El material " + VLMaterial + " \nNO se ha ingresado al \nalmacen 2");
+                                    VLSihaymaterial = false;
+                                    return;
+                                }
+                            }   //Fin del foreach (DataRow ren4 in dtable4.Rows) //Recorro material por material
+                            //Reviso si la caja esta en la estructura para validar existencia y proceder con el registro de la produccion **** CAJA ***** CAJA
+                            //Si la bandera de SiHayMaterial es verdarera, busco existencia de caja, en caso contrario no tiene caso buscar caja
+                            if (VLSihaymaterial)
+                            {
+                                Console.WriteLine("Busca caja...");
+                                SQLs = @" Select orden_fabricacion, cantidad, codigo_material, descripcion_material, grupo 
+                             from T_ordenFabricacion_Materiales Where orden_fabricacion = '" + VLPWO + @"' and primario = '1'  and codigo_material like '95-000%'";
+                                dtable4 = BDJanus.SelectDataTable(SQLs);
+                                if (dtable4.Rows.Count > 0) //Si hay estructura
+                                {
+                                    foreach (DataRow ren4 in dtable4.Rows) //Recorro material por material
+                                    {
+                                        VLSKUCaja = ren4[2].ToString();
+                                        /*Busco existencias de la caja en almacen 2 ordenados por lote*/
+                                        SQLs = @"Select  numparte, almacen, ubicacion, cantidad from v_existencias_au  
+                                     Where almacen = '2' and Numparte = '" + VLSKUCaja + @"' 
+                                     and cantidad > 0 and ubicacion= '" + VLMAquina + @"' ";
+                                        dtable5 = BDJanus.SelectDataTable(SQLs);
+                                        if (dtable5.Rows.Count > 0) //Si hay estructura
+                                        {
+                                            foreach (DataRow ren5 in dtable5.Rows) //Busco el campo cantidad
+                                            {
+                                                if (string.IsNullOrEmpty(ren5[3].ToString()))  //Si el campo es vacio o nulo, indico que no hay material
+                                                {
+                                                    VLSihaymaterial = false;
+                                                    MsgError("No se puede registrar \nla produccion debido \na que no se cuenta con \nsuficiente caja \n" + VLSKUCaja);                                                   
+                                                }
+                                                else
+                                                {
+                                                    VLSihaymaterial = true;
+                                                }
+                                            }
+    
+                                        }
+                                        else
+                                        {
+                                            VLSihaymaterial = false;
+                                            MsgError("No se puede registrar \nla produccion debido \na que no se cuenta con \nsuficiente caja \n" + VLSKUCaja);
+                                            break;
+                                        }
+                                    } //Fin del foreach
+                                } //FIN del dtable4
+                            }  //FIN del if (VLSihaymaterial) para validar la caja
+
+
+                            //Si al final de los ciclos VLSihayMaterial = True...
+                            if (VLSihaymaterial)  //Se procedera a guardar los registros en las tablas WHS400G y WHS400D  ***********
+                            {
+                                /*============================AQUI COMIENZA LA TRANSACCION ===========================================================================*/
+
+                                SQLTran = @"
+
+BEGIN TRY
+  BEGIN TRANSACTION
+
+/*Obtengo el folio Maximo de la clave TSO, le incremento 1 y lo actualizo*/
+Update T_FOLIOS set FOLIO = (Select folio from t_Folios Where cvemov = 'ENS') +1 Where CVEMOV = 'ENS'
+
+/*Asigno el nuevo folio a la variable*/
+declare @VLFolio nvarchar (10) = (Select folio from t_Folios Where cvemov = 'ENS')
+declare @VLNumParte nvarchar(20) = '" + VLNumParte + @"'
+declare @VLDescNumParte nvarchar(max) = '" + VLDescNumParte + @" '
+declare @VLGrupo nvarchar(5) = '" + VLGrupo + @"'
+declare @VLCantidad decimal (18, 3) = " + VLCantidad + @"
+declare @VLUbicacion nvarchar(20) = 'DEFAULT'
+declare @VLLote nvarchar(50) = '" + VLLote + @"'
+declare @VLUsuario nvarchar(10) = '" + VLUsuario + @"'
+declare @VLMAquina nvarchar(10) = '" + VLMAquina + @"'
+declare @VLPWOReal nvarchar(10) = '" + VLPWOReal + @"'
+declare @VLEtiquetaID nvarchar(50) = '" + VLEtiquetaID + @"'
+
+/*Se procede a insertar el registro de WHS400G*/
+declare @VLAlmOri nvarchar(3) = '2'
+declare @VLAlmDest nvarchar(3) = '3'
+Insert into whs400g(CVEMOV, folio, numparte, descpart, gruprod, cantidad, almorig, almdest, ubicdest, lotedest, USUARIOC, FECHAMOV, REFEREN, ORDPROD, fechac, fecham, reversa, claverev, foliorev, baja, etiquetaid)
+values('ENS', @VLFolio, @VLNumParte, @VLDescNumParte, @VLGrupo, @VLCantidad, @VLAlmOri, @VLAlmDest, @VLUbicacion, @VLLote, @VLUsuario, " + VLFechaYMD + @", @VLMAquina, @VLPWOReal, " + VLFechaC + @", " + VLFechaM + @", '0', '', '', '0', @VLEtiquetaID)
+
+ /*Se procede a recorrer la matriz para insertar*/
+
+declare @VLDescMat nvarchar(max)
+declare @VLGrupMat nvarchar(5)
+declare @VLUniMed nvarchar(5)
+";
+                                //string VLMaterial = "";
+                                for (i = 0; i <= r - 1; i++)
+                                {
+                                    
+                                    VLMaterial = matrizmateriales[i, 2];
+                                    SQLTran = SQLTran + @"
+    /*Busco informacion adicional del material a ingresar*/
+    Set @VLDescMat = (Select descpart from t_productos where numparte = '" + VLMaterial + @"') 
+    Set @VLGrupMat = (Select gruprod from t_productos where numparte = '" + VLMaterial + @"') 
+    Set @VLUniMed = (Select  unimed from t_productos where numparte = '" + VLMaterial + @"') 
+";
+                                    VLLote = matrizmateriales[i, 6];
+                                    VLCantidadACubrir = Convert.ToDecimal(matrizmateriales[i, 5]); //********REVISAR QUE LA CANTIDAD SEA LA REQUERIDA
+    if (i < 9)
+                                    {
+                                        VLRenglon = "000" + Convert.ToString(i + 1);
+                                    }
+                                    else
+                                    {
+                                        VLRenglon = "00" + Convert.ToString(i + 1);
+                                    }
+                                    SQLTran = SQLTran + @"
+    /*Se inserta el registro de detalle*/
+    Insert into WHS400D (CVEMOV, FOLIO, RENGLON, NUMPARTE, DESCPART, GRUPROD, CANTUNIT, CANTIDAD, UNIMED, UBICACION, LOTE, ETIQUETAID)
+	values ('ENS', @VLFolio, '" + VLRenglon + @"', '" + VLMaterial + "', @VLDescMat, @VLGrupMat, " + VLMatxMillar + @", " + VLCantidadACubrir + @", @VLUniMed, '" + VLMAquina + "', '" + VLLote + "', '" + VLEtiquetaID + "' )";
+} //Fin del for  (i = 0; i <= r; i++)
+
+                                //Si la maquina es MAQ% descuento la caja
+                                if (VLMAquina.Substring(0,3) == "MAQ" )
+                                {
+                                    SQLTran = SQLTran + @"
+                                declare @VLMaterial nvarchar(20)
+                                /*Descuento la caja***********************/
+                                set @VLMaterial = (Select codigo_material from T_ordenFabricacion_Materiales Where orden_fabricacion = '" + VLPWO + @"' and primario = '1' and codigo_material like '95-000%')
+	  set @VLDescMat = (Select descripcion_material from T_ordenFabricacion_Materiales Where orden_fabricacion = '" + VLPWO + @"' and primario = '1' and codigo_material like '95-000%')
+	  set @VLGrupMat = (Select grupo from T_ordenFabricacion_Materiales Where orden_fabricacion = '" + VLPWO + @"' and primario = '1' and codigo_material like '95-000%')
+
+    /*Indico el siguiente numero de rnglon*/
+
+    ";
+                                    if (r < 9)
+                                    {
+                                        VLRenglon = "000" + Convert.ToString(r + 1);
+                                    }
+                                    else
+                                    {
+                                        VLRenglon = "00" + Convert.ToString(r + 1);
+                                    }
+                                    SQLTran = SQLTran + @"
+    /*Se inserta el registro de la caja*/
+    if @VLMaterial is not null
+    begin
+    insert into WHS400D (CVEMOV, FOLIO, RENGLON, NUMPARTE, DESCPART, GRUPROD, CANTUNIT, CANTIDAD, UNIMED, UBICACION, LOTE, ETIQUETAID)
+	 values ('ENS', @VLFolio, '" + VLRenglon + @"', @VLMaterial, @VLDescMat, @VLGrupMat, " + VLMatxMillar + @", 1, 'PZA', '" + VLMAquina + @"', '0', '" + VLEtiquetaID + @"' )
+    end
+";
+                                }
+
+                         
+
+ SQLTran = SQLTran + @"
+
+/*Reviso si la cantidad registrada completa la orden de produccion ****************** */
+/*cAMBIO EL ESTATUS DE LA ETIQUETA BAJA A VERDADERO*/
+
+update t_etiquetas set escaneado='1'  
+ Where Numero_etiqueta = substring('" + VLEtiquetaID + @"', 1, charindex('*', substring('" + VLEtiquetaID + @"', 1, len('" + VLEtiquetaID + @"'))) - 1) 
+ and folio_orden = substring('" + VLEtiquetaID + "', charindex('*', substring('" + VLEtiquetaID + @"', 1, len('" + VLEtiquetaID + @"'))) + 1,  charindex('*', substring('" + VLEtiquetaID + @"', charindex('*', substring('" + VLEtiquetaID + @"', 1, len('" + VLEtiquetaID + @"'))) + 1, len('" + VLEtiquetaID + @"'))) - 1)
+ and escaneado='0'
+
+/*actualizo el avance de la produccion*/
+Update T_OrdenesPlaneadas set avance = (Select avance from T_OrdenesPlaneadas Where folio='" + VLPWOReal + @"' and estatus='PRODUCTION' and baja='0') + " + VLCantidad + @" Where folio='" + VLPWOReal + @"' and estatus='PRODUCTION' and baja='0'
+
+
+declare @Etiquetasfaltantes int 
+set @Etiquetasfaltantes = (Select count(numero_etiqueta) from T_Etiquetas where folio_orden='" + VLPWOReal + @"' and escaneado='0' and baja='0')
+if (@Etiquetasfaltantes > 0 )
+begin
+  print 'Se registro la caja y faltan por escanear ' + CONVERT(varchar(10), @Etiquetasfaltantes) 
+end
+else   /*Ya se escanearon todas las cajas. se procedera a cerrar la orden*/
+begin
+   /*Actualizo el estatus y el campo baja de la tabla de PWO planeadas */
+   update T_OrdenesPlaneadas set estatus = 'FINISHED', baja = '1' where folio = '" + VLPWOReal + @"' 
+   /*Cuando sale del while es porque ya se actualizo*/
+   update T_OrdenesProduccion set estatus = 'FINISHED', baja = '1' where folio = '" + VLPWOReal + @"'
+   /*Actualizo el estatus de la PWO siguiente a PRODUCTION*/
+   update top(1) t_ordenesplaneadas set estatus = 'PRODUCTION' 
+    where baja = '0' and linea_produccion = '" + VLMAquina + @"' and secuencia = (Select min(secuencia) from t_ordenesplaneadas where baja = '0' and linea_produccion = '" + VLMAquina + @"')
+end
+
+/********************** AQUI COMIENZA EL PROCESO DE LA ETIQEUTA MAESTRA*****************************/
+
+/********************** AQUI TERMINA EL PROCESO DE LA ETIQEUTA MAESTRA*****************************/
+
+  COMMIT TRANSACTION
+END TRY
+/*Si FALLA LA TRANSACCION...*/
+BEGIN CATCH
+  If @@TRANCOUNT > 0 
+    BEGIN
+	  ROLLBACK TRANSACTION
+	END
+	RAISERROR ('NO SE COMPLETO LA TRANSACCION', 16, 1)
+    SELECT   
+        ERROR_NUMBER() AS ErrorNumber,  
+        ERROR_MESSAGE() AS ErrorMessage, 
+		ERROR_PROCEDURE () AS ErrorProcedure,
+		ERROR_STATE () as ErrorState,
+		ERROR_SEVERITY () as ErrorSeverity,
+		ERROR_LINE () as ErrorLine
+END CATCH
+
+";
+                                //Aqui ejecuto la transaccion
+                                if (!BDJanus.executecommand(SQLTran)) //Se actualizo la cantidad de la caja a 0
+                                {
+                                    //Aun faltan cajas por escanear
+                                    MsgError("ERR:registra_pt \nHubo Problemas para \nregistrar la caja, \nescanee nuevamente \nla etiqueta \nPresione ENTER"); //+ " \nCajas registradas: " + VLCajasEscaneadas + " \nFaltan: " + VLCajasNoEscaneadas + " \nPresione ENTER");
+                                    dtable9 = BDJanus.SelectDataTable(SQLTran);
+                                    if (dtable9.Rows.Count > 0)
+                                    {
+                                        string ErrNum = "", ErrMsg = "", ErrLine = "";
+                                        foreach (DataRow ren in dtable9.Rows)
+                                        {
+                                            ErrNum = ren[0].ToString();
+                                            ErrMsg = ren[1].ToString();
+                                            ErrLine = ren[5].ToString();
+                                        }
+                                        MsgError("Num Error: " + ErrNum + "\nMsg Error: " + ErrMsg + "\nLin Error: " + ErrLine);
+                                    }
+                                    return;
+                                }
+                                else //Se guardó el registro y ahora Verifico si ya se genero una nueva etiqueta Maestra
+                                {
+                                    //Reviso si hay mas de dos registros de la misma PWO en LBL100G y en LBL100D hay solo una etiquta del segundo folio de PWO imprimo el folio de tarima anterior.
+                                   
+                                }
+                               
+                                //Reviso cuantas cajas falta de escanear
+                                SQLs = "Select numero_etiqueta from T_Etiquetas where folio_orden='" + VLPWOReal + "' and escaneado='0' and baja ='0'";
+                                dtable7 = BDJanus.SelectDataTable(SQLs);
+                                if (dtable7.Rows.Count > 0)
+                                {
+                                    //Aun faltan cajas por escanear
+                                    Console.WriteLine("Se registro la Caja \n " + VLEtiquetaID + " \nPresione ENTER"); //+ " \nCajas registradas: " + VLCajasEscaneadas + " \nFaltan: " + VLCajasNoEscaneadas + " \nPresione ENTER");
+                                    Console.ReadLine();
+                                    Console.Clear();
+                                    //Verifico si es la primera caja de la PWO en ser registrada 
+                                    SQLs = "Select count (numero_etiqueta) as Cajas_Registradas from T_Etiquetas where folio_orden='" + VLPWOReal + "' and escaneado='1'  and baja ='0' ";
+                                    dtable9 = BDJanus.SelectDataTable(SQLs);
+                                    if (dtable9.Rows.Count > 0)
+                                    {
+                                        //Reviso el conteo de las cajas escaneadas
+                                        foreach (DataRow ren in dtable9.Rows )
+                                        {
+                                            if (ren[0].ToString() == "1") //Se trata de la primera caja
+                                            {
+                                                //Cambio el evento a Produccion Continua
+                                                RegistraEventoProdCont(VLMAquina, VLUsuario, VLPWOReal, VLNumParte);
+                                                //Obtengo el tiempo transcurrido en el cambio de orden
+                                                SQLs = "Select datediff(minute, fecha, fecha_fin ) as Minutos from t_eventos where id = (Select max (id) MaxID from T_Eventos where maquina = '" + VLMAquina + "' and evento='COF')";
+                                                dtable8 = BDJanus.SelectDataTable(SQLs);
+                                                if (dtable8.Rows.Count > 0)
+                                                {
+                                                    foreach(DataRow ren0 in dtable8.Rows)
+                                                    {
+                                                        VLMinutos = ren0[0].ToString();
+                                                    }
+                                                }
+                                                //Preparo la informacion para ser enviada por correo
+                                                string VLMEnsaje = "";
+                                                //Busco los usuarios a enviar el correo el modulo a validar es PROD010
+                                                SQLs = "Select USUARIO, CORREO, DESCRIPCION from C_Correo where menu='PROD101' AND BAJA = '0'";
+                                                dtable7 = BDJanus.SelectDataTable(SQLs);
+                                                if (dtable7.Rows.Count > 0) //Si hay usuarios que recibiran correo
+                                                {
+                                                    string VLDe = "janus@precisionglobal.mx", VLPara = "", VLAsunto = "", VLNombre = "";
+                                                    foreach (DataRow ren5 in dtable7.Rows)
+                                                    {
+                                                        VLNombre = ren5[0].ToString();
+                                                        VLPara = ren5[1].ToString();
+                                                        VLAsunto = ren5[2].ToString() + " " + VLPWOReal;
+                                                        VLMEnsaje = "Buen dia " + VLNombre + "\n JANUS ha detectado que se ha escaneado la primer caja de la orden de produccion " + VLPWOReal + "\n Maquina: " + VLMAquina + "\n codigo: " + VLNumParte + " " + VLDescNumParte + "\n El tiempo transcurrido registrado para realizar el cambio de orden fue de " + VLMinutos + " minutos. \n Este es un mensaje automatico e informativo por lo que no es necesario responder. \nQue tenga un buen dia";
+                                                        EnviaCorreo(VLDe, VLPara, VLAsunto, VLMEnsaje);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                else //Ya se escanearon todas las cajas. se procedera a cerrar la orden   *******************************
+                                {
+                                    //Imprimo la ultima etiqueta Maestra
+                                    //ImprimeEtiqueta(PVLFolio, VLPWOReal); //MODULO SCAN0040
+                                    //Indico al usuario cuales materiales debe devolver
+                                    Materiales_a_Retirar_V2_TRN(VLMAquina, VLPWOReal, VLUsuario);
+                                    //Registra_Merma(VLUsuario); //Despues de hacer al menos una devolucion, registrara la merma
+                                    Titulo("LA ORDEN DE PRODUCCION \nSE HA TERMNADO");
+                                    Materiales_Faltantes_para_Nueva_Orden(VLMAquina);  //Muestra el inventario del almacen para la siguiente PWO
+                                    RegistraEventoCambioOrden(VLMAquina,  VLUsuario,  VLPWOReal,  VLNumParte); //Se registra el evento de Cambio de ORden
+                                    //Preparo la informacion para ser enviada por correo
+                                    string VLMEnsaje = "";
+                                    //Busco los usuarios a enviar el correo el modulo a validar es PROD010
+                                    SQLs = "Select USUARIO, CORREO, DESCRIPCION from C_Correo where menu='PROD100' AND BAJA = '0'";
+                                    dtable7 = BDJanus.SelectDataTable(SQLs);
+                                    if (dtable7.Rows.Count > 0) //Si hay usuarios que recibiran correo
+                                    {
+                                        string VLDe = "janus@precisionglobal.mx", VLPara = "", VLAsunto = "", VLNombre="";
+                                        foreach (DataRow ren5 in dtable7.Rows)
+                                        {
+                                            VLNombre = ren5[0].ToString();
+                                            VLPara = ren5[1].ToString();
+                                            VLAsunto = ren5[2].ToString() + " " + VLPWOReal;
+                                            VLMEnsaje = "Buen dia " + VLNombre + "\n JANUS ha detectado que se ha escaneado la ultima caja de la orden de produccion " + VLPWOReal + "\n Maquina: " + VLMAquina + "\n codigo: " + VLNumParte + " " + VLDescNumParte + "\n Este es un mensaje automatico e informativo por lo que no es necesario responder. \nQue tenga un buen dia";
+                                            EnviaCorreo(VLDe, VLPara, VLAsunto, VLMEnsaje);
+                                        }
+                                    }
+                                    MsgAviso("Se procedera a verificar \nlos materiales de la \nsiguiente, \nNO SE VAN A REGISTAR TRASPASOS");
+                                    /*Valido los materiales de la siguiente PWO 2022-09-19*/
+                                    while (Verifica_Material_Nva_PWO(VLMAquina, VLUsuario) != "N" )  //SCAN046
+                                    {
+                                        //Aqui no hago algo, todo el proceso se hace en la funcion Verifica_Material_Nva_PWO
+                                    }
+                                }
+                                
+                                
+                                /*============================AQUI TERMINA LA TRANSACCION ===========================================================================*/
+                                
+
+                            } // FIN del if (VLSihaymaterial)  //Se procedera a guardar los registros en las tablas WHS400G y WHS400D  **
+                        } //FIN de if (dtable4.Rows.Count > 0 )
+                        else
+                        {
+                            MsgError("No hay estructura \navisar a CALIDAD\nERR:registra_pt");
+                        }
+                        /*<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>*/
+                    }
+                    else
+                    {
+                        VLGrupo = "-";
+                        MsgError("ERROR: Revisar el GRUPO ");
+                        return;
+                    }
+
+                }
+                
+            }  //Fin del if (dtable.Rows.Count > 0)
+            else  //No se encontro la etiqueta, Verifico si es porque ya se escaneo
+            {
+                //******
+                SQLs = "Select  numero_etiqueta, orden_produccion, folio_orden, cantidad_caja, cantidad_total, codigo_producto, descripcion_producto, cliente_nombre, cliente_codigo, pedido_cliente, num_caja, total_cajas, lote_produccion, baja, pedido, cliente_codigo_producto ";
+                SQLs = SQLs + " from t_Etiquetas ";
+                SQLs = SQLs + " Where Numero_etiqueta = substring('" + VLEtiquetaID + "', 1, charindex('*', substring('" + VLEtiquetaID + "', 1, len('" + VLEtiquetaID + "'))) - 1) ";
+                SQLs = SQLs + " and folio_orden = substring('" + VLEtiquetaID + "', charindex('*', substring('" + VLEtiquetaID + "', 1, len('" + VLEtiquetaID + "'))) + 1, ";
+                SQLs = SQLs + " charindex('*', substring('" + VLEtiquetaID + "', charindex('*', substring('" + VLEtiquetaID + "', 1, len('" + VLEtiquetaID + "'))) + 1, len('" + VLEtiquetaID + "'))) - 1)";
+                SQLs = SQLs + " and escaneado='1'";
+                dtable = BDJanus.SelectDataTable(SQLs);
+                if (dtable.Rows.Count > 0)  //Si esta la etiqueta pero ya escaneada
+                {
+                    MsgError("La etiqueta " + VLEtiquetaID + "\nya fue \nescaneada!");
+                }
+                else //No se encontro la etiqueta
+                {
+
+                    MsgError("La etiqueta no es \nvalida!");
+                }
+                return;  //Salgo del Procedimiento
+            }
+
+        }  //Fin del procedimiento registra_pt
